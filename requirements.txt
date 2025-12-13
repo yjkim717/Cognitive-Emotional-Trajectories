@@ -1,0 +1,29 @@
+# Core Data Processing
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Progress Bar
+tqdm>=4.65.0
+
+# Big5 Personality Feature Extraction
+torch>=2.0.0
+transformers>=4.30.0
+
+# NELA Feature Extraction
+nltk>=3.8.0
+textblob>=0.17.1
+textstat>=0.7.3
+
+# TFIDF Feature Extraction
+scikit-learn>=1.3.0
+
+# SBERT Embedding Feature Extraction
+sentence-transformers>=2.2.0
+
+# Note: NLTK data will be downloaded automatically when first used
+# Required NLTK data packages:
+# - punkt
+# - punkt_tab
+# - stopwords
+# - averaged_perceptron_tagger_eng
+# - vader_lexicon

@@ -8,6 +8,8 @@ macro_dataset/
 
 # Allow essential ML CSV artifacts
 !dataset/process/**/trajectory_features_combined.csv
+# Allow requirements.txt
+!requirements.txt
 
 
 # Ignore virtual environment
