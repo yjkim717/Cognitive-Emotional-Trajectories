@@ -1,0 +1,23 @@
+# Ignore datasets and generated outputs
+Datasets/
+cleaned_datasets/
+characteristic Analysis/
+macro_dataset/
+*.csv
+*.txt
+
+# Allow essential ML CSV artifacts
+!dataset/process/**/trajectory_features_combined.csv
+
+
+# Ignore virtual environment
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Ignore logs and temporary files
+*.log
+*.tmp
+*.DS_Store
+.env
