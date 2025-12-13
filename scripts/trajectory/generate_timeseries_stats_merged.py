@@ -35,8 +35,17 @@ def parse_year_and_index_from_filename(filename: str) -> Tuple[Optional[int], Op
     return (None, None)
 
 
-def compute_timeseries_stats(series: pd.Series) -> Dict[str, float]:
-    """Compute variance, CV, RMSSD, MASD, and normalized RMSSD/MASD for a series."""
+def compute_timeseries_stats(series: pd.Series, normalize: bool = False, robust: bool = False) -> Dict[str, float]:
+    """Compute variance, CV, RMSSD, MASD, and normalized RMSSD/MASD for a series.
+    
+    Args:
+        series: Time series data (already sorted by time)
+        normalize: Whether to normalize (not used in this version, kept for API compatibility)
+        robust: Whether to use robust statistics (not used in this version, kept for API compatibility)
+    
+    Returns:
+        Dictionary with keys: variance, cv, rmssd, masd, rmssd_norm, masd_norm
+    """
     if series is None or len(series) == 0:
         return {
             "variance": np.nan,
@@ -220,14 +229,14 @@ def process_single_dataset(
                 
                 if len(feature_series) == 0:
                     # No valid data for this feature
-                    for stat_name in ["variance", "cv", "rmssd", "masd"]:
+                    for stat_name in ["variance", "cv", "rmssd", "masd", "rmssd_norm", "masd_norm"]:
                         stats_dict[f"{feature_col}_{stat_name}"] = np.nan
                 else:
-                    # Compute all time series statistics (original)
+                    # Compute all time series statistics (original and normalized)
                     ts_stats = compute_timeseries_stats(feature_series, normalize=False)
                     for stat_name, stat_value in ts_stats.items():
-                        # Only save main stats, skip normalized_variance for now (will add later)
-                        if stat_name in ["variance", "cv", "rmssd", "masd"]:
+                        # Save all stats including normalized versions
+                        if stat_name in ["variance", "cv", "rmssd", "masd", "rmssd_norm", "masd_norm"]:
                             stats_dict[f"{feature_col}_{stat_name}"] = stat_value
             
             results_list.append(stats_dict)
@@ -236,14 +245,9 @@ def process_single_dataset(
         
         # Reorder columns: metadata first, then features with consistent ordering
         metadata_cols = ["field", "author_id", "sample_count"]
-        feature_stat_cols = []
-        stat_names = ["variance", "cv", "rmssd", "masd"]
-        
-        for feature_col in numeric_cols:
-            for stat_name in stat_names:
-                col_name = f"{feature_col}_{stat_name}"
-                if col_name in result.columns:
-                    feature_stat_cols.append(col_name)
+        feature_stat_cols = [c for c in result.columns if c not in metadata_cols]
+        # Sort feature stats columns by feature name, then by stat type (same as outliers_removed script)
+        feature_stat_cols.sort(key=lambda x: (x.rsplit('_', 1)[0], x.rsplit('_', 1)[1] if '_' in x else x))
         
         result = result[metadata_cols + feature_stat_cols]
         

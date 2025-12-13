@@ -13,11 +13,16 @@ Usage:
 
 import argparse
 import os
+import sys
 from pathlib import Path
+
+# Add project root to Python path
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
 
 import pandas as pd
 
-from utils.metrics_big5 import extract_big5_features
+from utils.metric_big5 import extract_big5_features
 from utils.metric_nela_merged import extract_nela_features_merged
 
 
@@ -97,7 +102,7 @@ def process_human_domains(domains=None, skip_big5=False, skip_combine=False):
                 df_big5 = pd.read_csv(big5_path)
             else:
                 print(f"⚠️  Warning: Big Five features not found at {big5_path}")
-                print(f"   Please run with --extract-big5 to generate them, or skip combining with --skip-combine")
+                print(f"   Please run without --skip-big5 to generate them, or skip combining with --skip-combine")
                 df_big5 = None
         
         # Extract merged NELA
@@ -198,7 +203,7 @@ def process_llm_models(
                         df_big5 = pd.read_csv(big5_path)
                     else:
                         print(f"⚠️  Warning: Big Five features not found at {big5_path}")
-                        print(f"   Please run with --extract-big5 to generate them, or skip combining with --skip-combine")
+                        print(f"   Please run without --skip-big5 to generate them, or skip combining with --skip-combine")
                         df_big5 = None
                 
                 # Extract merged NELA
@@ -275,14 +280,14 @@ def main():
         help=f"Domains to process (default: {' '.join(DEFAULT_DOMAINS)})."
     )
     parser.add_argument(
-        "--extract-big5",
+        "--skip-big5",
         action="store_true",
-        help="Force extract Big Five features (default: skip, use existing big5.csv files)."
+        help="Skip Big Five extraction (use existing big5.csv files if available)."
     )
     parser.add_argument(
         "--skip-combine",
         action="store_true",
-        help="Skip combining Big Five and NELA (only extract NELA)."
+        help="Skip combining Big Five and NELA (only extract features separately)."
     )
     parser.add_argument(
         "--nela-only",
@@ -292,12 +297,11 @@ def main():
     
     args = parser.parse_args()
     
-    # Default: skip Big5 extraction (use existing files)
-    # Only extract if --extract-big5 is explicitly set
-    skip_big5 = not args.extract_big5
+    # Default: extract both Big5 and NELA
+    # Only skip Big5 if --skip-big5 or --nela-only is set
+    skip_big5 = args.skip_big5 or args.nela_only
     
     if args.nela_only:
-        skip_big5 = True
         args.skip_combine = True
     
     # Process human domains

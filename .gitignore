@@ -6,8 +6,6 @@ macro_dataset/
 *.csv
 *.txt
 
-# Allow essential ML CSV artifacts
-!dataset/process/**/trajectory_features_combined.csv
 # Allow requirements.txt
 !requirements.txt
 

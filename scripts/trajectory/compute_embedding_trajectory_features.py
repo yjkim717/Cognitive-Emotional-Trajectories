@@ -21,8 +21,8 @@ from typing import List
 import numpy as np
 import pandas as pd
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-sys.path.append(str(PROJECT_ROOT))
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT))
 
 DATA_ROOT = PROJECT_ROOT / "dataset" / "process"
 DOMAINS = ("academic", "blogs", "news")
