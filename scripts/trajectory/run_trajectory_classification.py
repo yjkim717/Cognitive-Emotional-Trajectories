@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, roc_auc_score, f1_score
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import GroupKFold
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_ROOT = PROJECT_ROOT / "dataset" / "process"
@@ -143,14 +143,17 @@ def select_feature_sets(df: pd.DataFrame, geometry_spaces: List[str]) -> Dict[st
 
 def evaluate(df: pd.DataFrame, feature_sets: Dict[str, pd.DataFrame]) -> pd.DataFrame:
     y = (df["label"] == "human").astype(int).values
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    # Use GroupKFold to prevent group leakage: group by author_id
+    # This ensures all samples from the same author (human + LLM shadows) stay in the same fold
+    groups = df["author_id"].values
+    gkf = GroupKFold(n_splits=5)
     rows: List[Dict] = []
     for name, X_df in feature_sets.items():
         X = X_df.to_numpy()
         accs: List[float] = []
         rocs: List[float] = []
         f1s: List[float] = []
-        for train_idx, test_idx in skf.split(X, y):
+        for train_idx, test_idx in gkf.split(X, y, groups=groups):
             clf = RandomForestClassifier(
                 n_estimators=300,
                 max_depth=None,
