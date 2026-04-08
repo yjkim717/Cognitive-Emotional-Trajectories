@@ -29,8 +29,11 @@ import pandas as pd
 # ---------------------------------------------------------------------------
 DATA_ROOT = PROJECT_ROOT / "dataset" / "process"
 DOMAINS = ("academic", "blogs", "news")
-PROVIDERS = ("DS", "G4B", "G12B", "LMK")
+PROVIDERS = ("DS", "G4B", "G12B", "LMK", "CL35", "G4OM")
 LEVELS = ("LV1", "LV2", "LV3")
+LLM_WITH_HISTORY_MODELS = ("DS", "CL35", "G4OM")
+LLM_WITH_HISTORY_LEVEL = "LV3"
+LLM_WITH_HISTORY_DOMAIN = "news"
 TFIDF_FILENAME = "tfidf_vectors.csv"
 SBERT_FILENAME = "sbert_vectors.csv"
 HUMAN_COMBINED_FILENAME = "combined_merged.csv"  # Human uses combined_merged (not outliers_removed)
@@ -178,6 +181,24 @@ def process_llm_domain(provider: str, level: str, domain: str) -> None:
         print(f"⚠️  LLM combined file not found: {combined_path}")
 
 
+def process_llm_with_history(domains=None) -> None:
+    """Merge TFIDF + SBERT with combined_merged for LLM_with_history across all specified domains."""
+    if domains is None:
+        domains = list(DOMAINS)
+    for provider in LLM_WITH_HISTORY_MODELS:
+        for domain in domains:
+            llm_dir = DATA_ROOT / "LLM_with_history" / provider / LLM_WITH_HISTORY_LEVEL / domain
+            combined_path = llm_dir / "combined_merged.csv"  # no outliers_removed for this branch
+            tfidf_path = llm_dir / TFIDF_FILENAME
+            sbert_path = llm_dir / SBERT_FILENAME
+            output_path = llm_dir / OUTPUT_FILENAME
+            if combined_path.exists():
+                print(f"\n--- LLM_with_history {provider} LV3 {domain} ---")
+                merge_features_for_file(combined_path, tfidf_path, sbert_path, output_path)
+            else:
+                print(f"⚠️  LLM_with_history combined not found: {combined_path}")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Merge TF-IDF and SBERT features with combined.csv for micro datasets."
@@ -213,12 +234,23 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Only process LLM data.",
     )
+    parser.add_argument(
+        "--llm-with-history",
+        action="store_true",
+        help="Only process LLM_with_history (news, DS/CL35/G4OM, LV3).",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    
+    if args.llm_with_history:
+        print("\n" + "=" * 80)
+        print("PROCESSING LLM_with_history")
+        print("=" * 80)
+        process_llm_with_history(domains=args.domains)
+        print("\n✅ LLM_with_history features merged!")
+        return
     # Process human data
     if not args.llm_only:
         print("\n" + "="*80)

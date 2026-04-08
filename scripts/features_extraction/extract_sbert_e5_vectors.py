@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-Compute SBERT vectors (all-MiniLM-L6-v2) for micro datasets.
+Extract SBERT vectors using E5-Large model for micro datasets.
 
-Matches Jenny's embedding configuration but runs on our
-current micro dataset splits so we can persist sentence-level
-representations for every sample (human + LLM provider/level).
+This script extracts embeddings using the E5-Large model (intfloat/e5-large-v2)
+as an alternative to all-MiniLM-L6-v2 for comparison testing.
+
+Output files are saved as sbert_e5_vectors.csv to distinguish from
+the original sbert_vectors.csv (which uses all-MiniLM-L6-v2).
 """
 
 from __future__ import annotations
@@ -30,22 +32,17 @@ DATA_ROOT = PROJECT_ROOT / "dataset" / "process"
 DOMAINS = ("academic", "blogs", "news")
 PROVIDERS = ("DS", "G4B", "G12B", "LMK", "CL35", "G4OM")
 LEVELS = ("LV1", "LV2", "LV3")
-LLM_WITH_HISTORY_MODELS = ("DS", "CL35", "G4OM")
-LLM_WITH_HISTORY_LEVEL = "LV3"
-LLM_WITH_HISTORY_DOMAIN = "news"
 MAX_DOC_CHARS = 8_000
-MODEL_NAME = "all-MiniLM-L6-v2"
-OUTPUT_FILENAME = "sbert_vectors.csv"
+MODEL_NAME = "intfloat/e5-large-v2"  # E5-Large model
+OUTPUT_FILENAME = "sbert_e5_vectors.csv"  # Different filename to avoid overwriting
 
 
 def load_text(rel_path: str) -> str:
-    """Read UTF-8 text from project-relative or absolute path with truncation."""
-    p = Path(rel_path)
-    if not p.is_absolute():
-        p = PROJECT_ROOT / rel_path
-    if not p.exists():
-        raise FileNotFoundError(f"Missing text file: {p}")
-    text = read_utf8_text(str(p))
+    """Read UTF-8 text from project-relative path with truncation."""
+    abs_path = PROJECT_ROOT / rel_path
+    if not abs_path.exists():
+        raise FileNotFoundError(f"Missing text file: {abs_path}")
+    text = read_utf8_text(str(abs_path))
     return text[:MAX_DOC_CHARS]
 
 
@@ -98,59 +95,27 @@ def collect_entries(domain: str) -> List[Dict]:
     human_csv = DATA_ROOT / "human" / domain / "combined_merged.csv"
     _load_csv(human_csv, label="human", provider="human", level="LV0")
 
-    # LLM splits
+    # LLM splits - ONLY LV3
     for provider in PROVIDERS:
-        for level in LEVELS:
-            csv_path = DATA_ROOT / "LLM" / provider / level / domain / "combined_merged.csv"
-            _load_csv(csv_path, label="llm", provider=provider, level=level)
+        level = "LV3"  # Only extract LV3 data
+        csv_path = DATA_ROOT / "LLM" / provider / level / domain / "combined_merged.csv"
+        _load_csv(csv_path, label="llm", provider=provider, level=level)
 
-    return entries
-
-
-def collect_entries_llm_with_history(domain: str) -> List[Dict]:
-    """Collect samples from LLM_with_history for a given domain (DS/CL35/G4OM, LV3)."""
-    entries: List[Dict] = []
-
-    def _load_csv(csv_path: Path, label: str, provider: str, level: str) -> None:
-        if not csv_path.exists():
-            return
-        df = pd.read_csv(csv_path)
-        for _, row in df.iterrows():
-            rel_path = row.get("path")
-            if not isinstance(rel_path, str) or not rel_path.strip():
-                continue
-            try:
-                text = load_text(rel_path)
-            except FileNotFoundError:
-                continue
-            metadata = {
-                "filename": row.get("filename"),
-                "path": rel_path,
-                "label": label,
-                "domain": row.get("domain", domain),
-                "field": row.get("field"),
-                "author_id": row.get("author_id"),
-                "provider": provider,
-                "level": level,
-                "model": row.get("model"),
-            }
-            metadata["output_path"] = str(DATA_ROOT / "LLM_with_history" / provider / level / domain / OUTPUT_FILENAME)
-            entries.append({"text": text, "metadata": metadata})
-
-    for provider in LLM_WITH_HISTORY_MODELS:
-        csv_path = DATA_ROOT / "LLM_with_history" / provider / LLM_WITH_HISTORY_LEVEL / domain / "combined_merged.csv"
-        _load_csv(csv_path, label="llm", provider=provider, level=LLM_WITH_HISTORY_LEVEL)
     return entries
 
 
 def write_outputs(entries: List[Dict], vectors) -> None:
-    """Write SBERT vectors grouped by output path."""
+    """Write SBERT vectors grouped by output path.
+    
+    Uses 'sbert_e5_' prefix for column names to distinguish from
+    the original all-MiniLM-L6-v2 embeddings (which use 'sbert_' prefix).
+    """
     vectors_arr = np.asarray(vectors)
     if vectors_arr.ndim != 2:
         raise ValueError("Expected 2D array of SBERT vectors.")
 
     dim = vectors_arr.shape[1]
-    vector_columns = [f"sbert_{i+1}" for i in range(dim)]
+    vector_columns = [f"sbert_e5_{i+1}" for i in range(dim)]  # Use sbert_e5_ prefix
     vectors_df = pd.DataFrame(vectors_arr, columns=vector_columns)
     meta_df = pd.DataFrame([entry["metadata"] for entry in entries])
     combined_df = pd.concat([meta_df, vectors_df], axis=1)
@@ -163,36 +128,29 @@ def write_outputs(entries: List[Dict], vectors) -> None:
 
 
 def process_domain(domain: str) -> None:
+    """Process a single domain to extract E5-Large embeddings."""
     entries = collect_entries(domain)
     if not entries:
         print(f"⚠ No entries found for domain '{domain}'. Skipping.")
         return
 
     texts = [entry["text"] for entry in entries]
+    
+    print(f"Loading E5-Large model: {MODEL_NAME}")
     model = SentenceTransformer(MODEL_NAME)
-    embeddings = model.encode(texts, show_progress_bar=True)
-
+    print(f"Model embedding dimension: {model.get_sentence_embedding_dimension()}")
+    
+    print(f"Encoding {len(texts)} texts...")
+    embeddings = model.encode(texts, show_progress_bar=True, normalize_embeddings=True)
+    
+    print(f"Embeddings shape: {embeddings.shape}")
     write_outputs(entries, embeddings)
 
 
-def process_llm_with_history(domains=None) -> None:
-    """Extract SBERT for LLM_with_history across all specified domains."""
-    if domains is None:
-        domains = list(DOMAINS)
-    model = SentenceTransformer(MODEL_NAME)
-    for domain in domains:
-        print(f"\n=== SBERT vectors for LLM_with_history/{domain} ===")
-        entries = collect_entries_llm_with_history(domain)
-        if not entries:
-            print(f"⚠ No LLM_with_history entries found for domain '{domain}'. Run batch_analyze_metrics.py --llm-with-history first.")
-            continue
-        texts = [e["text"] for e in entries]
-        embeddings = model.encode(texts, show_progress_bar=True)
-        write_outputs(entries, embeddings)
-
-
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Extract SBERT vectors for micro datasets.")
+    parser = argparse.ArgumentParser(
+        description="Extract SBERT vectors using E5-Large model for micro datasets."
+    )
     parser.add_argument(
         "--domains",
         nargs="+",
@@ -200,22 +158,28 @@ def parse_args() -> argparse.Namespace:
         default=list(DOMAINS),
         help="Domains to process (default: all).",
     )
-    parser.add_argument(
-        "--llm-with-history",
-        action="store_true",
-        help="Process only LLM_with_history (news, DS/CL35/G4OM, LV3).",
-    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    if args.llm_with_history:
-        process_llm_with_history(domains=args.domains)
-        return
+    
+    print("=" * 80)
+    print("E5-Large SBERT Vector Extraction (LV3 only)")
+    print("=" * 80)
+    print(f"Model: {MODEL_NAME}")
+    print(f"Output filename: {OUTPUT_FILENAME}")
+    print(f"Column prefix: sbert_e5_")
+    print(f"Level: LV3 only (for LLM)")
+    print("=" * 80)
+    
     for domain in args.domains:
-        print(f"\n=== SBERT vectors for {domain} ===")
+        print(f"\n=== Processing domain: {domain} ===")
         process_domain(domain)
+    
+    print("\n" + "=" * 80)
+    print("✅ E5-Large embedding extraction complete!")
+    print("=" * 80)
 
 
 if __name__ == "__main__":

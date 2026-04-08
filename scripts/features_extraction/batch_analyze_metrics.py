@@ -32,6 +32,12 @@ LLM_DIR = DATA_ROOT / "llm"
 OUTPUT_ROOT = DATA_ROOT / "process"
 MERGE_KEYS = ["filename", "path", "label"]
 
+# LLM with history: incremental context (summaries of previous outputs), raw txt now lives under dataset/llm/llm_with_history/
+LLM_WITH_HISTORY_DIR = LLM_DIR / "llm_with_history"
+LLM_WITH_HISTORY_MODELS = ["DS", "CL35", "G4OM"]
+LLM_WITH_HISTORY_LEVEL = "LV3"
+LLM_WITH_HISTORY_DOMAIN = "news"
+
 # Default models and levels
 DEFAULT_MODELS = ["DS", "G4B", "G12B", "LMK"]
 DEFAULT_LEVELS = ["LV1", "LV2", "LV3"]
@@ -247,6 +253,79 @@ def process_llm_models(
                 print(f"\n✅ Completed: LLM/{model}/{level}/{domain}")
 
 
+def process_llm_with_history(skip_big5=False, skip_combine=False, domains=None):
+    """
+    Process LLM-with-history data (dataset/llm/llm_with_history/{domain}/).
+    Output: dataset/process/LLM_with_history/{model}/LV3/{domain}/
+    Same 20 CE features (Big Five + NELA) per sample; supports academic, blogs, news.
+    """
+    if domains is None:
+        domains = DEFAULT_DOMAINS
+    if not LLM_WITH_HISTORY_DIR.exists():
+        print(f"⚠️  LLM_with_history directory not found: {LLM_WITH_HISTORY_DIR}")
+        return
+    dataset_dir = str(LLM_WITH_HISTORY_DIR)
+    print("\n" + "=" * 70)
+    print("Processing LLM with History (incremental context)")
+    print("=" * 70)
+    print(f"Input: {LLM_WITH_HISTORY_DIR}")
+    print(f"Models: {LLM_WITH_HISTORY_MODELS}, level: {LLM_WITH_HISTORY_LEVEL}, domains: {domains}")
+    for model in LLM_WITH_HISTORY_MODELS:
+        for domain in domains:
+            print(f"\n{'#'*70}")
+            print(f"Processing: LLM_with_history/{model}/LV3/{domain}")
+            print(f"{'#'*70}")
+            output_dir = OUTPUT_ROOT / "LLM_with_history" / model / LLM_WITH_HISTORY_LEVEL / domain
+            output_dir.mkdir(parents=True, exist_ok=True)
+            big5_path = output_dir / "big5.csv"
+            nela_path = output_dir / "nela_merged.csv"
+            combined_path = output_dir / "combined_merged.csv"
+            df_big5 = None
+            df_nela = None
+            if not skip_big5:
+                print(f"\nExtracting Big Five for LLM_with_history/{model}/LV3/{domain}...")
+                df_big5 = extract_big5_features(
+                    dataset_dir,
+                    "llm",
+                    str(big5_path),
+                    domain=domain,
+                    model_name=model,
+                    level=LLM_WITH_HISTORY_LEVEL,
+                )
+            elif big5_path.exists():
+                df_big5 = pd.read_csv(big5_path)
+            else:
+                print(f"⚠️  Big Five not found at {big5_path}")
+            print(f"\nExtracting NELA for LLM_with_history/{model}/LV3/{domain}...")
+            df_nela = extract_nela_features_merged(
+                dataset_dir,
+                "llm",
+                str(nela_path),
+                domain=domain,
+                model_name=model,
+                level=LLM_WITH_HISTORY_LEVEL,
+            )
+            if not skip_combine and df_big5 is not None and df_nela is not None:
+                duplicate_meta_cols = [
+                    c for c in [
+                        "domain", "field", "author_id", "year", "item_index", "model", "level"
+                    ] if c in df_nela.columns
+                ]
+                if duplicate_meta_cols:
+                    df_nela = df_nela.drop(columns=duplicate_meta_cols)
+                df_combined = pd.merge(df_big5, df_nela, on=MERGE_KEYS, how="inner")
+                df_combined = _deduplicate_columns(df_combined)
+                drop_meta_cols = [
+                    c for c in ["year", "item_index", "year_x", "year_y", "item_index_x", "item_index_y"]
+                    if c in df_combined.columns
+                ]
+                if drop_meta_cols:
+                    df_combined = df_combined.drop(columns=drop_meta_cols)
+                df_combined.to_csv(combined_path, index=False)
+                print(f"✅ Combined saved to {combined_path} ({len(df_combined)} samples)")
+            print(f"✅ Completed: LLM_with_history/{model}/LV3/{domain}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Batch extract merged NELA features for all datasets."
@@ -294,6 +373,11 @@ def main():
         action="store_true",
         help="Only extract NELA features (skip Big Five and combine)."
     )
+    parser.add_argument(
+        "--llm-with-history",
+        action="store_true",
+        help="Process LLM-with-history data from dataset/llm/llm_with_history/ (DS/CL35/G4OM, LV3)."
+    )
     
     args = parser.parse_args()
     
@@ -303,6 +387,14 @@ def main():
     
     if args.nela_only:
         args.skip_combine = True
+    
+    # Process LLM with history (reviewer condition: incremental context)
+    if args.llm_with_history:
+        process_llm_with_history(skip_big5=skip_big5, skip_combine=args.skip_combine, domains=args.domains)
+        print("\n" + "=" * 70)
+        print("✅ LLM_with_history extraction completed!")
+        print("=" * 70)
+        return
     
     # Process human domains
     if not args.llm_only:
@@ -334,4 +426,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

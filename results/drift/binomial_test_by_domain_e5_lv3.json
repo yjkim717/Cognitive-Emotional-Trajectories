@@ -1,0 +1,9 @@
+{
+  "academic": [
+    {
+      "model": "DS",
+      "n_comparisons": 100,
+      "human_wins": 73,
+      "human_win_rate": 0.73,
+      "pvalue": 2.346206306321115e-06,
+      "significant": 

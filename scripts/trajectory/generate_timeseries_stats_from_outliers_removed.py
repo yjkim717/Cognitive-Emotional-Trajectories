@@ -394,6 +394,31 @@ def generate_all_levels_timeseries_stats(
                 print(f"[Skip] Input file not found: {input_path}")
                 stats["skipped"] += 1
     
+    elif target == "llm_with_history":
+        # Process LLM_with_history outlier-removed data
+        history_models = ["DS", "CL35", "G4OM"]
+        for model in history_models:
+            for level in levels:
+                for domain in domains:
+                    input_path = process_root / "LLM_with_history" / model / level / domain / "combined_merged_outliers_removed.csv"
+                    output_path = process_root / "LLM_with_history" / model / level / domain / "author_timeseries_stats_merged.csv"
+
+                    if input_path.exists():
+                        success = process_single_dataset(
+                            input_csv_path=input_path,
+                            output_csv_path=output_path,
+                            target="llm",
+                            domain=domain,
+                            model=model,
+                        )
+                        if success:
+                            stats["processed"] += 1
+                        else:
+                            stats["skipped"] += 1
+                    else:
+                        print(f"[Skip] Input file not found: {input_path}")
+                        stats["skipped"] += 1
+
     else:  # target == "llm"
         # Process LLM data for all levels
         for model in models:
@@ -401,7 +426,7 @@ def generate_all_levels_timeseries_stats(
                 for domain in domains:
                     input_path = process_root / "LLM" / model / level / domain / "combined_merged_outliers_removed.csv"
                     output_path = process_root / "LLM" / model / level / domain / "author_timeseries_stats_merged.csv"
-                    
+
                     if input_path.exists():
                         success = process_single_dataset(
                             input_csv_path=input_path,
@@ -441,9 +466,9 @@ def main():
     )
     parser.add_argument(
         "--target",
-        choices=["human", "llm"],
+        choices=["human", "llm", "llm_with_history"],
         default="llm",
-        help="Target dataset: human or llm (default: llm)"
+        help="Target dataset: human, llm, or llm_with_history (default: llm)"
     )
     parser.add_argument(
         "--models",

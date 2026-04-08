@@ -1,13 +1,21 @@
 #!/usr/bin/env python3
 """
-Generate time series statistics (variance, CV, RMSSD, MASD) for merged features.
+Generate time series statistics (variance, CV, RMSSD, MASD) for TFIDF and SBERT embeddings.
 
-This script processes all combined_merged.csv files and generates 
-author_timeseries_stats_merged.csv files containing variance, CV, RMSSD, and MASD 
-for each author based on merged NELA features (15 features).
+This script processes combined_with_embeddings.csv files and generates 
+author_timeseries_stats_embeddings.csv files containing variance, CV, RMSSD, and MASD 
+for each author based on TFIDF (10D) and SBERT (384D) embedding dimensions.
 
-Output file: author_timeseries_stats_merged.csv
-Location: Same directory as combined_merged.csv
+For each embedding dimension (tfidf_1 to tfidf_10, sbert_1 to sbert_384), computes:
+- variance (sample variance)
+- cv (coefficient of variation = std / |mean|)
+- rmssd (root mean square of successive differences)
+- masd (mean absolute successive differences)
+- rmssd_norm (normalized RMSSD = rmssd / |mean|)
+- masd_norm (normalized MASD = masd / |mean|)
+
+Output file: author_timeseries_stats_embeddings.csv
+Location: Same directory as combined_with_embeddings.csv
 """
 
 import argparse
@@ -111,35 +119,31 @@ def resolve_column(df: pd.DataFrame, target: str, required: bool = True) -> Opti
         raise KeyError(f"Column '{target}' not found in dataframe columns: {list(df.columns)}")
     return None
 
-DEFAULT_MODELS = ["DS", "G4B", "G12B", "LMK"]
-DEFAULT_LEVELS = ["LV1", "LV2", "LV3"]
+
 DEFAULT_DOMAINS = ["academic", "news", "blogs"]
 
 
 def process_single_dataset(
     combined_csv_path: Path,
     output_csv_path: Path,
-    target: str = "human",
+    target: str = "llm",
     domain: str = None,
     model: str = None,
     level: str = None,
 ) -> bool:
     """
-    Process a single combined_merged.csv file and generate author_timeseries_stats_merged.csv.
+    Process a single combined_with_embeddings.csv file and generate author_timeseries_stats_embeddings.csv.
     
     Args:
-        combined_csv_path: Path to combined_merged.csv input file
-        output_csv_path: Path to output author_timeseries_stats_merged.csv file
+        combined_csv_path: Path to combined_with_embeddings.csv input file
+        output_csv_path: Path to output author_timeseries_stats_embeddings.csv file
         target: "human" or "llm"
         domain: Domain name (for logging)
         model: Model name (for logging)
         level: Level name (for logging)
-    
-    Returns:
-        True if successful, False otherwise
     """
     if not combined_csv_path.exists():
-        print(f"[Skip] Combined merged CSV not found: {combined_csv_path}")
+        print(f"[Skip] File not found: {combined_csv_path}")
         return False
     
     try:
@@ -147,7 +151,7 @@ def process_single_dataset(
         df = pd.read_csv(combined_csv_path)
         
         if df.empty:
-            print(f"[Skip] Empty combined merged CSV: {combined_csv_path}")
+            print(f"[Skip] Empty combined_with_embeddings CSV: {combined_csv_path}")
             return False
         
         # Resolve column names
@@ -173,22 +177,27 @@ def process_single_dataset(
             print(f"[Skip] No records after filtering")
             return False
         
-        # Get numeric feature columns
-        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-        # Remove metadata columns
-        metadata_cols_to_remove = [author_col, field_col, domain_col, model_col, level_col, "year", "item_index"]
-        if "model" in df.columns:
-            metadata_cols_to_remove.append("model")
-        if "level" in df.columns:
-            metadata_cols_to_remove.append("level")
+        # Get TFIDF and SBERT vector columns
+        tfidf_cols = [col for col in df.columns if col.startswith("tfidf_") and col.replace("tfidf_", "").isdigit()]
+        sbert_cols = [col for col in df.columns if col.startswith("sbert_") and col.replace("sbert_", "").isdigit()]
         
+        # Sort columns numerically (tfidf_1, tfidf_2, ..., tfidf_10, sbert_1, sbert_2, ..., sbert_384)
+        tfidf_cols.sort(key=lambda x: int(x.replace("tfidf_", "")))
+        sbert_cols.sort(key=lambda x: int(x.replace("sbert_", "")))
+        
+        numeric_cols = tfidf_cols + sbert_cols
+        
+        if not numeric_cols:
+            print(f"[Skip] No TFIDF or SBERT vector columns found")
+            return False
+        
+        print(f"  Found {len(tfidf_cols)} TFIDF dimensions and {len(sbert_cols)} SBERT dimensions")
+        
+        # Remove metadata columns from numeric_cols if they were accidentally included
+        metadata_cols_to_remove = [author_col, field_col, domain_col, model_col, level_col, "year", "item_index"]
         for col in [c for c in metadata_cols_to_remove if c]:
             if col in numeric_cols:
                 numeric_cols.remove(col)
-        
-        if not numeric_cols:
-            print(f"[Skip] No numeric feature columns found")
-            return False
         
         # Extract year and item_index from filename for temporal ordering
         filename_col = "filename" if "filename" in df.columns else None
@@ -217,7 +226,7 @@ def process_single_dataset(
             else:
                 group_sorted = group
             
-            # Compute statistics for each numeric feature
+            # Compute statistics for each embedding dimension
             stats_dict = {
                 "field": field_val,
                 "author_id": author_val,
@@ -246,8 +255,26 @@ def process_single_dataset(
         # Reorder columns: metadata first, then features with consistent ordering
         metadata_cols = ["field", "author_id", "sample_count"]
         feature_stat_cols = [c for c in result.columns if c not in metadata_cols]
-        # Sort feature stats columns by feature name, then by stat type (same as outliers_removed script)
-        feature_stat_cols.sort(key=lambda x: (x.rsplit('_', 1)[0], x.rsplit('_', 1)[1] if '_' in x else x))
+        
+        # Sort feature stats columns: first by prefix (tfidf vs sbert), then by dimension number, then by stat type
+        def sort_key(col_name):
+            if '_' not in col_name:
+                return ('', 0, col_name)
+            parts = col_name.rsplit('_', 1)
+            feature_part = parts[0]  # e.g., tfidf_1, sbert_1
+            stat_part = parts[1]  # e.g., cv, variance
+            
+            # Extract prefix and number
+            if '_' in feature_part:
+                prefix, num_str = feature_part.rsplit('_', 1)
+                try:
+                    num = int(num_str)
+                    return (prefix, num, stat_part)
+                except ValueError:
+                    return (prefix, 0, stat_part)
+            return (feature_part, 0, stat_part)
+        
+        feature_stat_cols.sort(key=sort_key)
         
         result = result[metadata_cols + feature_stat_cols]
         
@@ -260,7 +287,7 @@ def process_single_dataset(
         
         print(f"  ✅ Saved: {output_csv_path}")
         print(f"     Processed {len(result)} field-author pairs across {len(df)} samples")
-        print(f"     Features: {len(numeric_cols)} numeric columns")
+        print(f"     Features: {len(tfidf_cols)} TFIDF + {len(sbert_cols)} SBERT dimensions")
         return True
         
     except Exception as e:
@@ -270,7 +297,7 @@ def process_single_dataset(
         return False
 
 
-def generate_all_timeseries_stats_merged(
+def generate_all_embedding_timeseries_stats(
     target: Optional[str] = None,
     domain: Optional[str] = None,
     model: Optional[str] = None,
@@ -278,20 +305,20 @@ def generate_all_timeseries_stats_merged(
     models: Optional[list[str]] = None,
     levels: Optional[list[str]] = None,
     domains: Optional[list[str]] = None,
-    output_filename: str = "author_timeseries_stats_merged.csv",
+    output_filename: str = "author_timeseries_stats_embeddings.csv",
 ):
     """
-    Generate author_timeseries_stats_merged.csv for all or specified datasets.
+    Generate author_timeseries_stats_embeddings.csv for all or specified datasets.
     
     Args:
         target: "human", "llm", or None (process both)
         domain: Specific domain (academic, news, blogs) or None (all domains)
-        model: Specific model (DS, G4B, G12B, LMK) or None (all models)
+        model: Specific model (DS, G4B, G12B, LMK, CL35, G4OM) or None (all models)
         level: Specific level (LV1, LV2, LV3) or None (all levels)
         models: List of models to process (overrides model parameter)
         levels: List of levels to process (overrides level parameter)
         domains: List of domains to process (overrides domain parameter)
-        output_filename: Output CSV filename (default: "author_timeseries_stats_merged.csv")
+        output_filename: Output CSV filename (default: "author_timeseries_stats_embeddings.csv")
     """
     process_root = Path(PROCESS_ROOT)
     processed = 0
@@ -299,129 +326,162 @@ def generate_all_timeseries_stats_merged(
     errors = 0
     
     print("="*70)
-    print("GENERATING AUTHOR TIMESERIES STATISTICS (MERGED VERSION)")
+    print("GENERATING AUTHOR TIMESERIES STATISTICS FOR EMBEDDINGS (TFIDF + SBERT)")
     print("="*70)
-    print(f"Input files: combined_merged.csv")
+    print(f"Input files: combined_with_embeddings.csv")
     print(f"Output filename: {output_filename}")
-    print(f"Statistics included: variance, CV, RMSSD, MASD")
+    print(f"Statistics included: variance, CV, RMSSD, MASD (and normalized versions)")
     print("="*70)
     
     # Process Human data
     if target is None or target == "human":
-        print("\n📁 Processing Human data...")
         human_root = process_root / "human"
-        
-        domains_to_process = domains if domains else ([domain] if domain else DEFAULT_DOMAINS)
-        
-        for domain_name in domains_to_process:
-            combined_path = human_root / domain_name / "combined_merged.csv"
-            output_path = human_root / domain_name / output_filename
+        if human_root.exists():
+            domains_to_process = domains if domains else ([domain] if domain else DEFAULT_DOMAINS)
             
-            if process_single_dataset(
-                combined_path, output_path,
-                target="human", domain=domain_name
-            ):
-                processed += 1
-            else:
-                skipped += 1
+            for domain_name in domains_to_process:
+                combined_path = human_root / domain_name / "combined_with_embeddings.csv"
+                output_path = human_root / domain_name / output_filename
+                
+                if process_single_dataset(
+                    combined_path, output_path, target="human", domain=domain_name
+                ):
+                    processed += 1
+                else:
+                    skipped += 1
+        else:
+            print("[Skip] Human data root not found")
+    
+    # Process LLM_with_history (DS/CL35/G4OM, LV3, all specified domains)
+    if target == "llm_with_history":
+        print("\n📁 Processing LLM_with_history data...")
+        history_models = ["DS", "CL35", "G4OM"]
+        domains_to_process = domains if domains else DEFAULT_DOMAINS
+        for model_name in history_models:
+            for domain_name in domains_to_process:
+                combined_path = process_root / "LLM_with_history" / model_name / "LV3" / domain_name / "combined_with_embeddings.csv"
+                output_path = process_root / "LLM_with_history" / model_name / "LV3" / domain_name / output_filename
+                if combined_path.exists():
+                    if process_single_dataset(
+                        combined_path, output_path,
+                        target="llm", domain=domain_name,
+                        model=model_name, level="LV3"
+                    ):
+                        processed += 1
+                    else:
+                        skipped += 1
+                else:
+                    skipped += 1
     
     # Process LLM data
-    if target is None or target == "llm":
-        print("\n📁 Processing LLM data...")
+    elif target is None or target == "llm":
         llm_root = process_root / "LLM"
-        
-        if not llm_root.exists():
-            print(f"[Skip] LLM directory not found: {llm_root}")
-        else:
-            models_to_process = models if models else ([model] if model else DEFAULT_MODELS)
-            levels_to_process = levels if levels else ([level] if level else DEFAULT_LEVELS)
+        if llm_root.exists():
+            models_to_process = models if models else ([model] if model else None)
+            levels_to_process = levels if levels else ([level] if level else None)
             domains_to_process = domains if domains else ([domain] if domain else DEFAULT_DOMAINS)
+            
+            if models_to_process is None:
+                # Auto-detect models
+                models_to_process = [d.name for d in llm_root.iterdir() if d.is_dir()]
+            
+            if levels_to_process is None:
+                # Auto-detect levels
+                for model_name in models_to_process:
+                    model_dir = llm_root / model_name
+                    if model_dir.exists():
+                        levels_to_process = [d.name for d in model_dir.iterdir() if d.is_dir()]
+                        break
             
             total_tasks = len(models_to_process) * len(levels_to_process) * len(domains_to_process)
             current_task = 0
             
             for model_name in models_to_process:
-                model_dir = llm_root / model_name.upper()
+                model_dir = llm_root / model_name
                 if not model_dir.exists():
                     print(f"[Skip] Model directory not found: {model_dir}")
                     continue
                 
                 for level_name in levels_to_process:
-                    level_dir = model_dir / level_name.upper()
+                    level_dir = model_dir / level_name
                     if not level_dir.exists():
                         print(f"[Skip] Level directory not found: {level_dir}")
                         continue
                     
                     for domain_name in domains_to_process:
                         current_task += 1
-                        combined_path = level_dir / domain_name / "combined_merged.csv"
+                        combined_path = level_dir / domain_name / "combined_with_embeddings.csv"
                         output_path = level_dir / domain_name / output_filename
                         
                         if process_single_dataset(
-                            combined_path, output_path,
-                            target="llm", domain=domain_name,
-                            model=model_name, level=level_name
+                            combined_path, output_path, 
+                            target="llm", domain=domain_name, model=model_name, level=level_name
                         ):
                             processed += 1
                         else:
                             skipped += 1
+        else:
+            print("[Skip] LLM data root not found")
     
-    # Summary
     print("\n" + "="*70)
-    print("SUMMARY")
-    print("="*70)
-    print(f"✅ Successfully processed: {processed} datasets")
-    print(f"⏭️  Skipped: {skipped} datasets")
-    print(f"❌ Errors: {errors} datasets")
-    print(f"\nOutput files saved as: {output_filename}")
+    print(f"SUMMARY: {processed} processed, {skipped} skipped, {errors} errors")
     print("="*70)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate author_timeseries_stats_merged.csv files (variance, CV, RMSSD, MASD) from combined_merged.csv for all or specified datasets.",
+        description="Generate author_timeseries_stats_embeddings.csv files (variance, CV, RMSSD, MASD) from combined_with_embeddings.csv for TFIDF and SBERT embeddings.",
     )
     parser.add_argument(
         "--target",
-        choices=["human", "llm"],
-        help="Target dataset type (human or llm). If not specified, process both.",
+        choices=["human", "llm", "llm_with_history"],
+        default=None,
+        help="Target: 'human', 'llm', or 'llm_with_history' (default: both human and llm)",
     )
     parser.add_argument(
         "--domain",
-        help="Specific domain (academic, news, blogs). If not specified, process all domains.",
+        choices=["academic", "blogs", "news"],
+        default=None,
+        help="Domain to process (default: all)",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Model to process (default: all)",
+    )
+    parser.add_argument(
+        "--level",
+        default=None,
+        help="Level to process (default: all)",
     )
     parser.add_argument(
         "--models",
         nargs="+",
-        help=f"LLM models to process (default: {' '.join(DEFAULT_MODELS)}).",
+        default=None,
+        help="List of models to process (overrides --model)",
     )
     parser.add_argument(
         "--levels",
         nargs="+",
-        help=f"LLM levels to process (default: {' '.join(DEFAULT_LEVELS)}).",
+        default=None,
+        help="List of levels to process (overrides --level)",
     )
     parser.add_argument(
         "--domains",
         nargs="+",
-        help=f"Domains to process (default: {' '.join(DEFAULT_DOMAINS)}).",
-    )
-    parser.add_argument(
-        "--model",
-        help="Specific LLM model (DS, G4B, G12B, LMK). Only used when --target=llm.",
-    )
-    parser.add_argument(
-        "--level",
-        help="Specific LLM level (LV1, LV2, LV3). Only used when --target=llm.",
+        choices=["academic", "blogs", "news"],
+        default=None,
+        help="List of domains to process (overrides --domain)",
     )
     parser.add_argument(
         "--output-filename",
-        default="author_timeseries_stats_merged.csv",
-        help="Output CSV filename (default: author_timeseries_stats_merged.csv)",
+        default="author_timeseries_stats_embeddings.csv",
+        help="Output filename (default: author_timeseries_stats_embeddings.csv)",
     )
     
     args = parser.parse_args()
     
-    generate_all_timeseries_stats_merged(
+    generate_all_embedding_timeseries_stats(
         target=args.target,
         domain=args.domain,
         model=args.model,
