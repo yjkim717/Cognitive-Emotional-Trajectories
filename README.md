@@ -10,6 +10,32 @@ The project focuses on temporal structure in writing across multiple representat
 
 It also includes an `LLM_with_history` branch for experiments in which generation is conditioned on incremental historical context.
 
+## Dataset
+
+The processed dataset (~1.2 GB) is hosted on HuggingFace:
+[https://huggingface.co/datasets/zhanweicao/cognitive-emotional-trajectories](https://huggingface.co/datasets/zhanweicao/cognitive-emotional-trajectories)
+
+### Setup (one-time)
+
+**1. Install the HuggingFace Hub client** (skip if already installed):
+
+```bash
+pip install huggingface_hub
+```
+
+**2. Download and extract the dataset:**
+
+```bash
+python download_dataset.py
+```
+
+The script will:
+- Download `dataset.zip` (~1.2 GB) from HuggingFace into the project root
+- Validate the archive
+- Extract it, creating (or replacing) the `dataset/` folder
+
+After this step all scripts in `scripts/` can be run without any further setup.
+
 ## Repository Structure
 
 - `dataset/`

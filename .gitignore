@@ -1,3 +1,7 @@
+# Large files hosted on HuggingFace
+dataset.zip
+__MACOSX/
+
 # Ignore datasets and generated outputs
 Datasets/
 cleaned_datasets/
